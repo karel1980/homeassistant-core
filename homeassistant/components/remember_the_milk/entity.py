@@ -38,7 +38,8 @@ class RememberTheMilkEntity(Entity):
                 "Token for account %s is invalid. You need to register again!",
                 self.name,
             )
-            self._rtm_config.delete_token(self._name)
+            if self._rtm_config:
+                self._rtm_config.delete_token(self._name)
             self._token_valid = False
         else:
             self._token_valid = True
@@ -55,7 +56,7 @@ class RememberTheMilkEntity(Entity):
             task_name = call.data[CONF_NAME]
             hass_id = call.data.get(CONF_ID)
             rtm_id = None
-            if hass_id is not None:
+            if hass_id is not None and self._rtm_config is not None:
                 rtm_id = self._rtm_config.get_rtm_id(self._name, hass_id)
             result = self._rtm_api.rtm.timelines.create()
             timeline = result.timeline.value
@@ -67,13 +68,14 @@ class RememberTheMilkEntity(Entity):
                 _LOGGER.debug(
                     "Created new task '%s' in account %s", task_name, self.name
                 )
-                self._rtm_config.set_rtm_id(
-                    self._name,
-                    hass_id,
-                    result.list.id,
-                    result.list.taskseries.id,
-                    result.list.taskseries.task.id,
-                )
+                if self._rtm_config is not None:
+                    self._rtm_config.set_rtm_id(
+                        self._name,
+                        hass_id,
+                        result.list.id,
+                        result.list.taskseries.id,
+                        result.list.taskseries.task.id,
+                    )
             else:
                 self._rtm_api.rtm.tasks.setName(
                     name=task_name,
@@ -98,7 +100,9 @@ class RememberTheMilkEntity(Entity):
     def complete_task(self, call: ServiceCall) -> None:
         """Complete a task that was previously created by this component."""
         hass_id = call.data[CONF_ID]
-        rtm_id = self._rtm_config.get_rtm_id(self._name, hass_id)
+        rtm_id = None
+        if self._rtm_config:
+            rtm_id = self._rtm_config.get_rtm_id(self._name, hass_id)
         if rtm_id is None:
             _LOGGER.error(
                 (
@@ -118,7 +122,8 @@ class RememberTheMilkEntity(Entity):
                 task_id=rtm_id[2],
                 timeline=timeline,
             )
-            self._rtm_config.delete_rtm_id(self._name, hass_id)
+            if self._rtm_config is not None:
+                self._rtm_config.delete_rtm_id(self._name, hass_id)
             _LOGGER.debug(
                 "Completed task with id %s in account %s", hass_id, self._name
             )

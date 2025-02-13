@@ -9,41 +9,31 @@ import voluptuous as vol
 
 from homeassistant.components import configurator
 from homeassistant.const import CONF_API_KEY, CONF_ID, CONF_NAME, CONF_TOKEN
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.helpers.typing import ConfigType
 
-from .entity import RememberTheMilkEntity
-
-# httplib2 is a transitive dependency from RtmAPI. If this dependency is not
-# set explicitly, the library does not work.
-_LOGGER = logging.getLogger(__name__)
-
-DOMAIN = "remember_the_milk"
-DEFAULT_NAME = DOMAIN
-
-CONF_SHARED_SECRET = "shared_secret"
-CONF_ID_MAP = "id_map"
-CONF_LIST_ID = "list_id"
-CONF_TIMESERIES_ID = "timeseries_id"
-CONF_TASK_ID = "task_id"
-
-RTM_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_NAME): cv.string,
-        vol.Required(CONF_API_KEY): cv.string,
-        vol.Required(CONF_SHARED_SECRET): cv.string,
-    }
+from ...config_entries import ConfigEntry
+from .const import (
+    CONF_ID_MAP,
+    CONF_LIST_ID,
+    CONF_SHARED_SECRET,
+    CONF_TASK_ID,
+    CONF_TIMESERIES_ID,
+    CONFIG_FILE_NAME,
+    DOMAIN,
+    RTM_SCHEMA,
 )
+from .entity import RememberTheMilkEntity
 
 CONFIG_SCHEMA = vol.Schema(
     {DOMAIN: vol.All(cv.ensure_list, [RTM_SCHEMA])}, extra=vol.ALLOW_EXTRA
 )
 
-CONFIG_FILE_NAME = ".remember_the_milk.conf"
-SERVICE_CREATE_TASK = "create_task"
-SERVICE_COMPLETE_TASK = "complete_task"
+# httplib2 is a transitive dependency from RtmAPI. If this dependency is not
+# set explicitly, the library does not work.
+_LOGGER = logging.getLogger(__name__)
 
 SERVICE_SCHEMA_CREATE_TASK = vol.Schema(
     {vol.Required(CONF_NAME): cv.string, vol.Optional(CONF_ID): cv.string}
@@ -57,6 +47,10 @@ def setup(hass: HomeAssistant, config: ConfigType) -> bool:
     component = EntityComponent[RememberTheMilkEntity](_LOGGER, DOMAIN, hass)
 
     stored_rtm_config = RememberTheMilkConfiguration(hass)
+    if DOMAIN not in config:
+        # We get here if there's nothing in configuration.yaml but config_flow was used.
+        return True
+
     for rtm_config in config[DOMAIN]:
         account_name = rtm_config[CONF_NAME]
         _LOGGER.debug("Adding Remember the milk account %s", account_name)
@@ -80,6 +74,30 @@ def setup(hass: HomeAssistant, config: ConfigType) -> bool:
             )
 
     _LOGGER.debug("Finished adding all Remember the milk accounts")
+    return True
+
+
+async def async_setup_entry(hass, config_entry: ConfigEntry[RTM_SCHEMA]):
+    name = config_entry.data[CONF_NAME]
+    api_key = config_entry.data[CONF_API_KEY]
+    shared_secret = config_entry.data[CONF_SHARED_SECRET]
+    token = config_entry.data[CONF_TOKEN]
+
+    def create_entity():
+        # TODO: fix stored_config thing, which must be shared between instances (add to hass.data[DOMAIN])?
+        return RememberTheMilkEntity(name, api_key, shared_secret, token, None)
+
+    entity = await hass.async_add_executor_job(create_entity)
+
+    async def create_todo(call: ServiceCall):
+        def create_task():
+            entity.create_task(call)
+
+        return await hass.async_add_executor_job(create_task)
+
+    hass.services.async_register(
+        DOMAIN, config_entry.data[CONF_NAME] + "_create_task", create_todo
+    )
     return True
 
 
@@ -108,7 +126,7 @@ def _register_new_account(
     hass, account_name, api_key, shared_secret, stored_rtm_config, component
 ):
     request_id = None
-    api = Rtm(api_key, shared_secret, "write", None)
+    api = Rtm(api_key, shared_secret, "delete", None)
     url, frob = api.authenticate_desktop()
     _LOGGER.debug("Sent authentication request to server")
 
