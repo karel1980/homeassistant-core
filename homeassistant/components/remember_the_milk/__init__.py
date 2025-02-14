@@ -47,6 +47,8 @@ def setup(hass: HomeAssistant, config: ConfigType) -> bool:
     component = EntityComponent[RememberTheMilkEntity](_LOGGER, DOMAIN, hass)
 
     stored_rtm_config = RememberTheMilkConfiguration(hass)
+    hass.data[DOMAIN] = stored_rtm_config
+
     if DOMAIN not in config:
         # We get here if there's nothing in configuration.yaml but config_flow was used.
         return True
@@ -65,13 +67,10 @@ def setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 api_key,
                 shared_secret,
                 token,
-                stored_rtm_config,
                 component,
             )
         else:
-            _register_new_account(
-                hass, account_name, api_key, shared_secret, stored_rtm_config, component
-            )
+            _register_new_account(hass, account_name, api_key, shared_secret, component)
 
     _LOGGER.debug("Finished adding all Remember the milk accounts")
     return True
@@ -84,28 +83,38 @@ async def async_setup_entry(hass, config_entry: ConfigEntry[RTM_SCHEMA]):
     token = config_entry.data[CONF_TOKEN]
 
     def create_entity():
-        # TODO: fix stored_config thing, which must be shared between instances (add to hass.data[DOMAIN])?
-        return RememberTheMilkEntity(name, api_key, shared_secret, token, None)
+        return RememberTheMilkEntity(
+            name, api_key, shared_secret, token, hass.data[DOMAIN]
+        )
 
     entity = await hass.async_add_executor_job(create_entity)
 
-    async def create_todo(call: ServiceCall):
-        def create_task():
-            entity.create_task(call)
+    async def create_task(call: ServiceCall):
+        return await hass.async_add_executor_job(lambda: entity.create_task(call))
 
-        return await hass.async_add_executor_job(create_task)
+    async def complete_task(call: ServiceCall):
+        return await hass.async_add_executor_job(lambda: entity.complete_task(call))
 
     hass.services.async_register(
-        DOMAIN, config_entry.data[CONF_NAME] + "_create_task", create_todo
+        DOMAIN,
+        config_entry.data[CONF_NAME] + "_create_task",
+        create_task,
+        schema=SERVICE_SCHEMA_CREATE_TASK,
     )
+
+    hass.services.async_register(
+        DOMAIN,
+        config_entry.data[CONF_NAME] + "_complete_task",
+        complete_task,
+        schema=SERVICE_SCHEMA_COMPLETE_TASK,
+    )
+
     return True
 
 
-def _create_instance(
-    hass, account_name, api_key, shared_secret, token, stored_rtm_config, component
-):
+def _create_instance(hass, account_name, api_key, shared_secret, token, component):
     entity = RememberTheMilkEntity(
-        account_name, api_key, shared_secret, token, stored_rtm_config
+        account_name, api_key, shared_secret, token, hass.data[DOMAIN]
     )
     component.add_entities([entity])
     hass.services.register(
@@ -122,9 +131,7 @@ def _create_instance(
     )
 
 
-def _register_new_account(
-    hass, account_name, api_key, shared_secret, stored_rtm_config, component
-):
+def _register_new_account(hass, account_name, api_key, shared_secret, component):
     request_id = None
     api = Rtm(api_key, shared_secret, "delete", None)
     url, frob = api.authenticate_desktop()
@@ -141,7 +148,7 @@ def _register_new_account(
             )
             return
 
-        stored_rtm_config.set_token(account_name, token)
+        hass[DOMAIN].set_token(account_name, token)
         _LOGGER.debug("Retrieved new token from server")
 
         _create_instance(
@@ -150,7 +157,6 @@ def _register_new_account(
             api_key,
             shared_secret,
             token,
-            stored_rtm_config,
             component,
         )
 
@@ -222,10 +228,8 @@ class RememberTheMilkConfiguration:
 
     def _initialize_profile(self, profile_name):
         """Initialize the data structures for a profile."""
-        if profile_name not in self._config:
-            self._config[profile_name] = {}
-        if CONF_ID_MAP not in self._config[profile_name]:
-            self._config[profile_name][CONF_ID_MAP] = {}
+        self._config.setdefault(profile_name, {})
+        self._config[profile_name].setdefault(CONF_ID_MAP, {})
 
     def get_rtm_id(self, profile_name, hass_id):
         """Get the RTM ids for a Home Assistant task ID.

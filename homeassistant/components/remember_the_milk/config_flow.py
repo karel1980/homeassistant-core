@@ -2,23 +2,22 @@ from typing import Any
 
 from rtmapi import Rtm
 
-from homeassistant.components.remember_the_milk import (DOMAIN, RTM_SCHEMA)
+from homeassistant.components.remember_the_milk import DOMAIN, RTM_SCHEMA
 from homeassistant.components.remember_the_milk.const import (
     CONF_SHARED_SECRET,
     RTM_TOKEN_SCHEMA,
 )
-from homeassistant.config_entries import (ConfigFlow, ConfigFlowResult)
-from homeassistant.const import (CONF_API_KEY, CONF_NAME)
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.const import CONF_API_KEY, CONF_NAME
 
 
 class RememberTheMilkConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
-        # TODO karel: use fields instead of a dict
         self.data = {}
         self._rtm_api = None
 
     async def async_step_user(
-            self, user_input: dict[str, Any] | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is None:
             return self.async_show_form(
@@ -53,7 +52,7 @@ class RememberTheMilkConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_token(
-            self, user_input: dict[str, Any] | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         def get_token():
             self._rtm_api.retrieve_token(self.data["frob"])
