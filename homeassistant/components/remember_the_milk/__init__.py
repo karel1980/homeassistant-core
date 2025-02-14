@@ -89,6 +89,12 @@ async def async_setup_entry(hass, config_entry: ConfigEntry[RTM_SCHEMA]):
 
     entity = await hass.async_add_executor_job(create_entity)
 
+    # TODO: should we postpone registering the services and creating the entity or just let it fail until the token is validated?
+    # -> i.e. await?
+    hass.async_add_executor_job(
+        lambda: _notify_user_if_token_needed(hass, name, api_key, shared_secret, entity)
+    )
+
     async def create_task(call: ServiceCall):
         return await hass.async_add_executor_job(lambda: entity.create_task(call))
 
@@ -148,7 +154,7 @@ def _register_new_account(hass, account_name, api_key, shared_secret, component)
             )
             return
 
-        hass[DOMAIN].set_token(account_name, token)
+        hass.data[DOMAIN].set_token(account_name, token)
         _LOGGER.debug("Retrieved new token from server")
 
         _create_instance(
@@ -159,6 +165,49 @@ def _register_new_account(hass, account_name, api_key, shared_secret, component)
             token,
             component,
         )
+
+        configurator.request_done(hass, request_id)
+
+    request_id = configurator.request_config(
+        hass,
+        f"{DOMAIN} - {account_name}",
+        callback=register_account_callback,
+        description=(
+            "You need to log in to Remember The Milk to"
+            "connect your account. \n\n"
+            "Step 1: Click on the link 'Remember The Milk login'\n\n"
+            "Step 2: Click on 'login completed'"
+        ),
+        link_name="Remember The Milk login",
+        link_url=url,
+        submit_caption="login completed",
+    )
+
+
+def _notify_user_if_token_needed(hass, account_name, api_key, shared_secret, entity):
+    if entity._token_valid:
+        return
+
+    request_id = None
+    api = Rtm(api_key, shared_secret, "delete", None)
+    url, frob = api.authenticate_desktop()
+    _LOGGER.debug("Sent authentication request to server")
+
+    def register_account_callback(fields: list[dict[str, str]]) -> None:
+        """Call for register the configurator."""
+        api.retrieve_token(frob)
+        token = api.token
+        if api.token is None:
+            _LOGGER.error("Failed to register, please try again")
+            configurator.notify_errors(
+                hass, request_id, "Failed to register, please try again."
+            )
+            return
+
+        hass.data[DOMAIN].set_token(account_name, token)
+        _LOGGER.debug("Retrieved new token from server")
+
+        # Nothing else needs to be done, the entity and services will now start working
 
         configurator.request_done(hass, request_id)
 
