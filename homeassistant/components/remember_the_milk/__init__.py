@@ -87,19 +87,21 @@ async def async_setup_entry(hass, config_entry: ConfigEntry[RTM_SCHEMA]):
             name, api_key, shared_secret, token, hass.data[DOMAIN]
         )
 
-    entity = await hass.async_add_executor_job(create_entity)
+    rtm_entity = await hass.async_add_executor_job(create_entity)
 
     # TODO: should we postpone registering the services and creating the entity or just let it fail until the token is validated?
     # -> i.e. await?
     hass.async_add_executor_job(
-        lambda: _notify_user_if_token_needed(hass, name, api_key, shared_secret, entity)
+        lambda: _notify_user_if_token_needed(
+            hass, name, api_key, shared_secret, rtm_entity
+        )
     )
 
     async def create_task(call: ServiceCall):
-        return await hass.async_add_executor_job(lambda: entity.create_task(call))
+        return await hass.async_add_executor_job(lambda: rtm_entity.create_task(call))
 
     async def complete_task(call: ServiceCall):
-        return await hass.async_add_executor_job(lambda: entity.complete_task(call))
+        return await hass.async_add_executor_job(lambda: rtm_entity.complete_task(call))
 
     hass.services.async_register(
         DOMAIN,
@@ -184,8 +186,10 @@ def _register_new_account(hass, account_name, api_key, shared_secret, component)
     )
 
 
-def _notify_user_if_token_needed(hass, account_name, api_key, shared_secret, entity):
-    if entity._token_valid:
+def _notify_user_if_token_needed(
+    hass, account_name, api_key, shared_secret, rtm_entity
+):
+    if rtm_entity._token_valid:
         return
 
     request_id = None
